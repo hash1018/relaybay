@@ -24,4 +24,5 @@
 //! protocol asks for.
 
 pub mod codec;
+pub mod rtmp;
 pub mod unit;
