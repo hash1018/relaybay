@@ -6,10 +6,12 @@
 //!
 //! - [`chunk`] cuts messages into pieces small enough to interleave, and
 //!   puts them back together.
+//! - [`amf0`] reads and writes the values a command message is made of.
 //!
 //! Nothing here is specific to a codec. What arrives is a message with a
 //! type, a timestamp and a payload; turning the video ones into
 //! [`crate::unit::VideoUnit`]s is the ingest's job, and it uses
 //! [`crate::codec`] to do it.
 
+pub mod amf0;
 pub mod chunk;
