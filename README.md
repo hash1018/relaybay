@@ -53,24 +53,54 @@ for.
 
 ## Status
 
-Early. The codec layer and RTMP's reading side are in place; nothing is
-connected to a socket yet, and no egress exists.
+RTMP publishing works end to end: an encoder connects, and what it sends
+comes out of a path as tracks and units. No egress exists yet, so nothing can
+watch it.
 
 Done:
 
 - **Codecs** — H.264's two framings and conversion between them, the
   `AVCDecoderConfigurationRecord`, and AAC's `AudioSpecificConfig`
-- **RTMP** — the handshake, the chunk stream, and AMF0. None of it does any
-  I/O: each layer is fed a buffer and asked what it makes of it.
 - **The common form** — tracks, descriptions and units
+- **RTMP ingest** — handshake, chunk stream, AMF0, FLV tag bodies, and the
+  session that turns all of it into a published stream
+- **Paths** — a registry, a keyframe cache for readers that join late, and
+  fan-out that drops rather than making a publisher wait
 
 Planned, in order:
 
-1. **RTMP ingest** — `connect`, `publish`, and a socket at last
-2. **Paths** — a registry, and fan-out to readers
-3. **RTSP egress** — SDP, and RTP packetization (FU-A, STAP-A)
-4. **WebRTC egress** — via `str0m`
-5. **HLS egress** — segments and a playlist
+1. **RTSP egress** — SDP, and RTP packetization (FU-A, STAP-A)
+2. **WebRTC egress** — via `str0m`
+3. **HLS egress** — segments and a playlist
+
+## Where the runtime is
+
+Everything that reads or writes a socket uses `tokio`. Nothing under that
+does: codecs, chunks, AMF0 and the session state machine are fed a buffer and
+asked what they make of it, so the whole of a publish is driven in tests with
+no runtime at all.
+
+That boundary is also what makes embedding work. `Server::start` builds a
+runtime and keeps it inside the handle it returns, so an application on
+ordinary threads never sees one:
+
+```rust
+let server = relaybay::server::Server::start(Default::default())?;
+// … the application's own threads run as they always did …
+server.shutdown();
+```
+
+An application that already has a runtime uses `Server::start_on` instead,
+and gets no second set of worker threads.
+
+## Checking it against a real encoder
+
+`examples/live.rs` starts a server, publishes to it with ffmpeg, and reads
+what comes out. It needs ffmpeg on the path:
+
+```
+cargo run --example live
+```
 
 ## Library or binary
 

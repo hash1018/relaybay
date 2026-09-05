@@ -31,5 +31,6 @@
 pub mod codec;
 pub mod path;
 pub mod rtmp;
+pub mod server;
 pub mod track;
 pub mod unit;

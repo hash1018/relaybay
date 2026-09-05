@@ -16,7 +16,28 @@ thiserror = "2"
 # protocol under them — codecs, chunks, AMF0, the session — is runtime-free
 # and stays that way, so an application can embed the server without the
 # runtime reaching its own code.
-tokio = { version = "1", features = ["sync", "rt", "macros"] }
+tokio = { version = "1", features = [
+    "sync",
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "macros",
+] }
+# A server that cannot say why it dropped a connection is one nobody can
+# operate. Without a subscriber installed these compile to a level check and
+# nothing else, so an embedder that does not want the output does not pay for
+# it.
+tracing = "0.1"
+# The binary's own log output. Nothing in the library uses it: an embedder
+# installs whichever subscriber its application already has.
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "ansi",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 [lib]
 name = "relaybay"

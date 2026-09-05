@@ -13,14 +13,18 @@
 //! - [`session`] decides what all of that means: what to answer, what a
 //!   publisher has said it is sending, and which units come out.
 //!
-//! None of them does any I/O. Each is fed what has arrived and asked what it
-//! makes of it, so a whole publish can be driven in a test with no runtime,
-//! and so the driver above can be replaced without any of this changing.
-//! That boundary is the point: everything under it is protocol, and the
-//! socket — with the choice of runtime it implies — stays above.
+//! None of those does any I/O. Each is fed what has arrived and asked what
+//! it makes of it, so a whole publish can be driven in a test with no
+//! runtime, and so the driver above can be replaced without any of them
+//! changing. That boundary is the point: everything under it is protocol.
+//!
+//! [`server`] is the driver, and the only part of this module that has ever
+//! seen a socket. It reads into a buffer, hands whole messages to a
+//! [`session::Session`], and does what comes back.
 
 pub mod amf0;
 pub mod chunk;
 pub mod flv;
 pub mod handshake;
+pub mod server;
 pub mod session;
