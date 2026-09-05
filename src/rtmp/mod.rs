@@ -10,17 +10,17 @@
 //! - [`amf0`] reads and writes the values a command message is made of.
 //! - [`flv`] reads and writes what sits in front of the coded bytes in an
 //!   audio or video message.
+//! - [`session`] decides what all of that means: what to answer, what a
+//!   publisher has said it is sending, and which units come out.
 //!
-//! None of them does any I/O: each is fed a buffer and asked what it makes
-//! of it, so that the socket, and the choice of runtime it implies, stays at
-//! the edge.
-//!
-//! Nothing here is specific to a codec. What arrives is a message with a
-//! type, a timestamp and a payload; turning the video ones into
-//! [`crate::unit::VideoUnit`]s is the ingest's job, and it uses
-//! [`crate::codec`] to do it.
+//! None of them does any I/O. Each is fed what has arrived and asked what it
+//! makes of it, so a whole publish can be driven in a test with no runtime,
+//! and so the driver above can be replaced without any of this changing.
+//! That boundary is the point: everything under it is protocol, and the
+//! socket — with the choice of runtime it implies — stays above.
 
 pub mod amf0;
 pub mod chunk;
 pub mod flv;
 pub mod handshake;
+pub mod session;
