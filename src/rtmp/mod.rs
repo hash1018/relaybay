@@ -8,6 +8,8 @@
 //! - [`chunk`] cuts messages into pieces small enough to interleave, and
 //!   puts them back together.
 //! - [`amf0`] reads and writes the values a command message is made of.
+//! - [`flv`] reads and writes what sits in front of the coded bytes in an
+//!   audio or video message.
 //!
 //! None of them does any I/O: each is fed a buffer and asked what it makes
 //! of it, so that the socket, and the choice of runtime it implies, stays at
@@ -20,4 +22,5 @@
 
 pub mod amf0;
 pub mod chunk;
+pub mod flv;
 pub mod handshake;
