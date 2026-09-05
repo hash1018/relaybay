@@ -31,12 +31,16 @@ use tokio::task::JoinHandle;
 
 use crate::path::Registry;
 use crate::rtmp;
+use crate::rtsp;
 
 /// What to serve, and with what.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Where to accept RTMP publishers, or `None` not to.
     pub rtmp: Option<SocketAddr>,
+
+    /// Where to accept RTSP players, or `None` not to.
+    pub rtsp: Option<SocketAddr>,
 
     /// How many threads the runtime [`Server::start`] builds will use.
     ///
@@ -53,6 +57,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rtmp: Some(([0, 0, 0, 0], 1935).into()),
+            rtsp: Some(([0, 0, 0, 0], 8554).into()),
             worker_threads: 2,
         }
     }
@@ -71,7 +76,10 @@ impl Server {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(config.worker_threads.max(1))
             .thread_name("relaybay")
-            .enable_io()
+            // Timers as well as sockets: a write that never completes is
+            // given a deadline rather than waited on forever, and a runtime
+            // without them panics at the first one rather than at startup.
+            .enable_all()
             .build()?;
         let mut handle = Self::start_on(config, runtime.handle().clone())?;
         handle.runtime = Some(runtime);
@@ -83,14 +91,25 @@ impl Server {
     /// Safe to call from inside that runtime: the listeners are bound with
     /// the standard library and handed over, so nothing here blocks on a
     /// future.
+    ///
+    /// The runtime needs both I/O and timers — a `Builder::enable_all`, or
+    /// `enable_io` and `enable_time` together. A write to a reader that has
+    /// stopped taking bytes is given a deadline rather than waited on
+    /// forever, and a runtime without timers panics at the first of those
+    /// rather than here.
     pub fn start_on(config: Config, runtime: Handle) -> io::Result<ServerHandle> {
         let registry = Registry::new();
         let mut tasks = Vec::new();
 
         if let Some(address) = config.rtmp {
             let listener = bind(address, &runtime)?;
-            tracing::info!(%address, "accepting RTMP");
+            tracing::info!(%address, "accepting RTMP publishers");
             tasks.push(runtime.spawn(rtmp::server::serve(listener, Arc::clone(&registry))));
+        }
+        if let Some(address) = config.rtsp {
+            let listener = bind(address, &runtime)?;
+            tracing::info!(%address, "accepting RTSP players");
+            tasks.push(runtime.spawn(rtsp::server::serve(listener, Arc::clone(&registry))));
         }
 
         Ok(ServerHandle {
@@ -189,6 +208,7 @@ mod tests {
     fn config() -> Config {
         Config {
             rtmp: Some(([127, 0, 0, 1], 0).into()),
+            rtsp: Some(([127, 0, 0, 1], 0).into()),
             worker_threads: 1,
         }
     }
@@ -208,6 +228,7 @@ mod tests {
         let address = taken.local_addr().unwrap();
         let error = Server::start(Config {
             rtmp: Some(address),
+            rtsp: None,
             worker_threads: 1,
         })
         .expect_err("the port is in use");
@@ -221,6 +242,7 @@ mod tests {
     fn a_server_that_serves_nothing_starts() {
         let server = Server::start(Config {
             rtmp: None,
+            rtsp: None,
             worker_threads: 1,
         })
         .unwrap();

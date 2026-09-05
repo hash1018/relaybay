@@ -97,6 +97,10 @@ pub struct Session {
     /// The path every request on this connection has to name, once one has.
     path: Option<String>,
     tracks: Vec<Setup>,
+    /// Whether the driver above can send to a pair of the client's UDP
+    /// ports. What a `SETUP` may be answered with is a fact about the
+    /// server, not about the header — see [`Transport::offered`].
+    udp: bool,
 }
 
 impl Default for Session {
@@ -117,7 +121,20 @@ impl Session {
             id: format!("{:08x}", scramble(id) as u32),
             path: None,
             tracks: Vec::new(),
+            udp: false,
         }
+    }
+
+    /// Says whether the driver can send over UDP as well as over the
+    /// connection.
+    ///
+    /// A client that is offered only the transports the server can actually
+    /// provide asks again for one of them; one that is agreed a transport
+    /// nothing then sends on waits for packets that never come.
+    #[must_use]
+    pub fn accepting_udp(mut self, udp: bool) -> Self {
+        self.udp = udp;
+        self
     }
 
     /// The session id a client repeats on every request after `SETUP`.
@@ -230,7 +247,14 @@ impl Session {
             return answer(Status::NOT_FOUND);
         };
 
-        let Some(transport) = request.headers.get("Transport").and_then(Transport::parse) else {
+        // The first form the client offered that this server can actually
+        // send on. Agreeing to one nothing then sends over would leave the
+        // client waiting for packets that never come.
+        let udp = self.udp;
+        let Some(transport) = request.headers.get("Transport").and_then(|header| {
+            Transport::offered(header)
+                .find(|offer| udp || matches!(offer, Transport::Interleaved { .. }))
+        }) else {
             return answer(Status::UNSUPPORTED_TRANSPORT);
         };
 

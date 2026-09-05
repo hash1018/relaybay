@@ -17,6 +17,7 @@ thiserror = "2"
 # and stays that way, so an application can embed the server without the
 # runtime reaching its own code.
 tokio = { version = "1", features = [
+    "time",
     "sync",
     "rt",
     "rt-multi-thread",

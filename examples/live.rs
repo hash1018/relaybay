@@ -30,6 +30,7 @@ fn video_encoder() -> &'static str {
 fn main() {
     let server = Server::start(Config {
         rtmp: Some(([127, 0, 0, 1], 11935).into()),
+        rtsp: Some(([127, 0, 0, 1], 18554).into()),
         worker_threads: 2,
     })
     .expect("bound");

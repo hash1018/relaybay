@@ -410,13 +410,23 @@ pub enum Transport {
 
 impl Transport {
     /// Reads a `Transport` header, taking the first form it offers that this
-    /// can do.
+    /// can express.
     ///
     /// A client lists what it will accept, in the order it would prefer, so
     /// refusing the whole header because one of them is multicast would turn
     /// down an offer that also included something workable.
     pub fn parse(header: &str) -> Option<Self> {
-        header.split(',').find_map(Self::parse_one)
+        Self::offered(header).next()
+    }
+
+    /// Every form the header offers that this can express, in the order the
+    /// client would prefer them.
+    ///
+    /// What a caller that can do some of them and not others reads instead
+    /// of [`Transport::parse`]: which ones those are is a fact about the
+    /// server rather than about the header.
+    pub fn offered(header: &str) -> impl Iterator<Item = Self> + '_ {
+        header.split(',').filter_map(Self::parse_one)
     }
 
     fn parse_one(spec: &str) -> Option<Self> {

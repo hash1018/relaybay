@@ -53,9 +53,11 @@ for.
 
 ## Status
 
-RTMP publishing works end to end: an encoder connects, and what it sends
-comes out of a path as tracks and units. No egress exists yet, so nothing can
-watch it.
+It relays. An encoder publishes over RTMP and a player watches over RTSP:
+
+```
+ffmpeg ──RTMP──▶ relaybay ──RTSP──▶ ffmpeg / VLC
+```
 
 Done:
 
@@ -66,12 +68,18 @@ Done:
   session that turns all of it into a published stream
 - **Paths** — a registry, a keyframe cache for readers that join late, and
   fan-out that drops rather than making a publisher wait
+- **RTP** — H.264 as single packets and FU-A fragments, AAC with the AU
+  headers RFC 3640 asks for
+- **RTSP egress** — `DESCRIBE`, `SETUP`, `PLAY`, and the packets themselves
+  interleaved on the same connection
 
 Planned, in order:
 
-1. **RTSP egress** — SDP, and RTP packetization (FU-A, STAP-A)
-2. **WebRTC egress** — via `str0m`
-3. **HLS egress** — segments and a playlist
+1. **RTSP over UDP** — for clients that will not take the interleaved form
+2. **RTCP** — sender reports, which is what keeps audio and video in step
+   over a long stream
+3. **WebRTC egress** — via `str0m`
+4. **HLS egress** — segments and a playlist
 
 ## Where the runtime is
 
@@ -93,13 +101,23 @@ server.shutdown();
 An application that already has a runtime uses `Server::start_on` instead,
 and gets no second set of worker threads.
 
-## Checking it against a real encoder
+## Checking it against real software
 
-`examples/live.rs` starts a server, publishes to it with ffmpeg, and reads
-what comes out. It needs ffmpeg on the path:
+Tests written against this crate's own code can be self-consistently wrong,
+so two examples put ffmpeg on the far side. Both need it on the path.
+
+`examples/live.rs` publishes with ffmpeg and reads the units back in
+process — it checks that a real encoder is understood:
 
 ```
 cargo run --example live
+```
+
+`examples/relay.rs` publishes with ffmpeg over RTMP, plays with ffmpeg over
+RTSP, and probes the file that comes out. Neither end has seen this code:
+
+```
+cargo run --example relay
 ```
 
 ## Library or binary

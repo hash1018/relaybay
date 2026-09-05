@@ -134,6 +134,25 @@ impl Registry {
         })
     }
 
+    /// What is being published to `name`, without attaching to it.
+    ///
+    /// Separate from [`Registry::read`] because attaching copies the
+    /// keyframe a reader would start on, and a question about what a stream
+    /// is — an RTSP `DESCRIBE`, a listing — is not a reason to copy a
+    /// megabyte.
+    pub fn describe(&self, name: &str) -> Option<Arc<Description>> {
+        let path = self
+            .paths
+            .read()
+            .expect("no panic holds this")
+            .get(name)
+            .cloned()?;
+        let source = path.source.lock().expect("no panic holds this");
+        source
+            .as_ref()
+            .map(|source| Arc::clone(&source.description))
+    }
+
     /// The names something is being published to, in no particular order.
     pub fn names(&self) -> Vec<String> {
         self.paths
