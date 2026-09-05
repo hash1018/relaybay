@@ -1,11 +1,32 @@
 //! What every protocol in this crate agrees on.
+//!
+//! A [`Unit`] is one access unit — a coded picture, or a frame of sound —
+//! with the track it belongs to and when it belongs there. That is all a
+//! relay needs: an ingest makes them, a path fans them out, and each egress
+//! packages them for its own protocol. What a track *is* lives beside them,
+//! in a [`crate::track::Description`].
+//!
+//! # Why the two kinds are separate types
+//!
+//! A picture may be decoded out of order, so it has both a presentation and
+//! a decode time, and it may or may not be a place a reader can start.
+//! Sound is neither: AAC is never reordered and every frame stands alone.
+//! Giving [`AudioUnit`] a decode time would mean a field that is always the
+//! presentation time, and a keyframe flag that is always set — two fields
+//! saying nothing, on the type that carries the most units.
+//!
+//! So each holds what it has, and [`Unit`] puts them in one queue. What a
+//! path needs of a unit without caring which it is — which track, when, and
+//! whether a reader may join at it — is on [`Unit`] itself.
 
 use std::time::Duration;
 
-use crate::codec::h264;
+use bytes::Bytes;
 
-/// One access unit's coded picture, under the codec that says how to read
-/// it.
+use crate::codec::h264;
+use crate::track::TrackId;
+
+/// One coded picture, under the codec that says how to read it.
 ///
 /// The codec belongs here rather than on each NAL unit because it is a
 /// property of the stream: every unit of one picture is the same codec, and
@@ -41,17 +62,24 @@ impl VideoPayload {
     }
 }
 
-/// One access unit: the coded picture, and when it belongs.
+/// One frame of sound, under the codec that says how to read it.
 ///
-/// The NAL units inside carry no framing — neither Annex-B start codes nor
-/// length prefixes — because both are framings *of* a unit list, chosen by
-/// whichever protocol is carrying it. See the crate docs.
-///
-/// Cloning is cheap and is how a path serves more than one reader:
-/// `bytes::Bytes` shares its buffer, so fan-out copies the list and not the
-/// pictures.
-#[derive(Clone, Debug)]
+/// There is no `is_keyframe` here to match [`VideoPayload`]'s: every frame
+/// of every codec this carries stands alone, so the question has one answer
+/// and asking it would suggest otherwise.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AudioPayload {
+    /// AAC, as one raw access unit — no ADTS header, which is a framing that
+    /// belongs to the protocols asking for one. See the crate docs.
+    Aac(Bytes),
+}
+
+/// One coded picture, and where it belongs.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VideoUnit {
+    /// Which of the stream's tracks this is part of.
+    pub track: TrackId,
+
     /// The coded picture.
     pub payload: VideoPayload,
 
@@ -60,7 +88,7 @@ pub struct VideoUnit {
     /// Relative rather than absolute because a reader that joins late still
     /// needs a timeline that starts at zero, and because the protocols
     /// disagree about the epoch: RTMP counts milliseconds from the first
-    /// message, RTP counts 90 kHz ticks from a random offset. Both are
+    /// message, RTP counts clock ticks from a random offset. Both are
     /// derived at egress; neither is stored.
     pub pts: Duration,
 
@@ -78,8 +106,9 @@ pub struct VideoUnit {
 
 impl VideoUnit {
     /// Builds a unit, reading from the payload whether it is a keyframe.
-    pub fn new(payload: VideoPayload, pts: Duration, dts: Duration) -> Self {
+    pub fn new(track: TrackId, payload: VideoPayload, pts: Duration, dts: Duration) -> Self {
         Self {
+            track,
             keyframe: payload.is_keyframe(),
             payload,
             pts,
@@ -88,11 +117,102 @@ impl VideoUnit {
     }
 }
 
+/// One frame of sound, and where it belongs.
+///
+/// Shorter than [`VideoUnit`] by exactly what sound does not have: no decode
+/// time, because nothing reorders it, and no keyframe flag, because every
+/// frame is one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudioUnit {
+    /// Which of the stream's tracks this is part of.
+    pub track: TrackId,
+
+    /// The coded frame.
+    pub payload: AudioPayload,
+
+    /// Presentation time, from the start of the stream. See
+    /// [`VideoUnit::pts`].
+    pub pts: Duration,
+}
+
+/// One access unit of either kind.
+///
+/// What a path holds and fans out. One queue rather than two, so that
+/// pictures and sound keep the order they arrived in: an egress sends them
+/// in that order, and a queue trimmed back to the last keyframe drops the
+/// sound between there and here along with it.
+///
+/// Cloning is cheap and is how a path serves more than one reader:
+/// `bytes::Bytes` shares its buffer, so fan-out copies the list and not the
+/// media.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unit {
+    Video(VideoUnit),
+    Audio(AudioUnit),
+}
+
+impl Unit {
+    /// Which of the stream's tracks this belongs to.
+    pub fn track(&self) -> TrackId {
+        match self {
+            Self::Video(unit) => unit.track,
+            Self::Audio(unit) => unit.track,
+        }
+    }
+
+    /// When it belongs.
+    pub fn pts(&self) -> Duration {
+        match self {
+            Self::Video(unit) => unit.pts,
+            Self::Audio(unit) => unit.pts,
+        }
+    }
+
+    /// Whether a reader given nothing before this could decode it, which is
+    /// what a path asks when it is deciding where a new one may join and
+    /// what a full queue may drop.
+    ///
+    /// Always true for sound. That is not a stand-in for an answer this
+    /// cannot give: an AAC frame really can be decoded on its own, and a
+    /// reader that started at one would hear it.
+    pub fn is_keyframe(&self) -> bool {
+        match self {
+            Self::Video(unit) => unit.keyframe,
+            Self::Audio(_) => true,
+        }
+    }
+}
+
+impl From<VideoUnit> for Unit {
+    fn from(unit: VideoUnit) -> Self {
+        Self::Video(unit)
+    }
+}
+
+impl From<AudioUnit> for Unit {
+    fn from(unit: AudioUnit) -> Self {
+        Self::Audio(unit)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
-
     use super::*;
+    use crate::codec::aac;
+    use crate::track::{Codec, Description};
+
+    fn description() -> Description {
+        let sps = h264::Nal::new(Bytes::from_static(&[0x67, 0x42, 0xc0, 0x1e])).unwrap();
+        let pps = h264::Nal::new(Bytes::from_static(&[0x68, 0xce, 0x3c, 0x80])).unwrap();
+        Description::new(vec![
+            Codec::H264(h264::Parameters {
+                sps: vec![sps],
+                pps: vec![pps],
+            }),
+            Codec::Aac(aac::Parameters::parse(Bytes::from_static(&[0x12, 0x10])).unwrap()),
+        ])
+        .unwrap()
+    }
 
     fn nal(bytes: &'static [u8]) -> h264::Nal {
         h264::Nal::new(Bytes::from_static(bytes)).expect("not empty")
@@ -100,9 +220,52 @@ mod tests {
 
     #[test]
     fn a_unit_reads_its_own_keyframe_flag() {
+        let video = description().tracks()[0].id();
         let idr = VideoPayload::H264(vec![nal(&[0x65, 0x88])]);
         let inter = VideoPayload::H264(vec![nal(&[0x41, 0x9a])]);
-        assert!(VideoUnit::new(idr, Duration::ZERO, Duration::ZERO).keyframe);
-        assert!(!VideoUnit::new(inter, Duration::ZERO, Duration::ZERO).keyframe);
+        assert!(VideoUnit::new(video, idr, Duration::ZERO, Duration::ZERO).keyframe);
+        assert!(!VideoUnit::new(video, inter, Duration::ZERO, Duration::ZERO).keyframe);
+    }
+
+    #[test]
+    fn a_path_can_ask_a_unit_what_it_needs_without_knowing_which_kind_it_is() {
+        let description = description();
+        let video = description.tracks()[0].id();
+        let audio = description.tracks()[1].id();
+
+        let picture = Unit::from(VideoUnit::new(
+            video,
+            VideoPayload::H264(vec![nal(&[0x41, 0x9a])]),
+            Duration::from_millis(40),
+            Duration::from_millis(40),
+        ));
+        let sound = Unit::from(AudioUnit {
+            track: audio,
+            payload: AudioPayload::Aac(Bytes::from_static(&[0x21, 0x00])),
+            pts: Duration::from_millis(23),
+        });
+
+        assert_eq!(picture.track(), video);
+        assert_eq!(picture.pts(), Duration::from_millis(40));
+        assert!(!picture.is_keyframe());
+
+        assert_eq!(sound.track(), audio);
+        assert_eq!(sound.pts(), Duration::from_millis(23));
+        assert!(sound.is_keyframe(), "every frame of sound stands alone");
+    }
+
+    #[test]
+    fn a_unit_names_a_track_that_exists() {
+        let description = description();
+        let audio = description.tracks()[1].id();
+        let sound = Unit::from(AudioUnit {
+            track: audio,
+            payload: AudioPayload::Aac(Bytes::new()),
+            pts: Duration::ZERO,
+        });
+        let track = description
+            .track(sound.track())
+            .expect("in this description");
+        assert!(matches!(track.codec(), Codec::Aac(_)));
     }
 }

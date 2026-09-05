@@ -39,21 +39,34 @@ ingest ──▶ path ──▶ egress
            └─ one publisher, any number of readers, each on its own protocol
 ```
 
-Between them everything is a `VideoUnit`: the NAL units of one picture, as a
-list, with no framing at all. Neither Annex-B start codes nor length prefixes,
-because both are framings *of* that list — storing either would mean every
-other egress had to undo it first. Each egress adds back only what its own
-protocol asks for.
+A path carries two things. A `Description` says what the tracks are and what
+a decoder must be given to start on each — every protocol states that before
+it sends anything, as SDP or an `init.mp4` or an AVC sequence header, and all
+of them are the same facts in different notations.
+
+The media itself is a run of `Unit`s, and a unit's payload carries no framing
+at all: H.264 as a list of NAL units, with neither Annex-B start codes nor
+length prefixes, and AAC as a raw frame with no ADTS header. Framings belong
+to whoever is carrying the media, so storing one would mean every other
+egress had to undo it first. Each adds back only what its own protocol asks
+for.
 
 ## Status
 
-Early. The codec layer is in place — the two framings, conversion in both
-directions, and the `AVCDecoderConfigurationRecord` that RTMP and MP4 describe
-a stream with. No protocol is implemented yet.
+Early. The codec layer and RTMP's reading side are in place; nothing is
+connected to a socket yet, and no egress exists.
+
+Done:
+
+- **Codecs** — H.264's two framings and conversion between them, the
+  `AVCDecoderConfigurationRecord`, and AAC's `AudioSpecificConfig`
+- **RTMP** — the handshake, the chunk stream, and AMF0. None of it does any
+  I/O: each layer is fed a buffer and asked what it makes of it.
+- **The common form** — tracks, descriptions and units
 
 Planned, in order:
 
-1. **RTMP ingest** — handshake, chunk stream, AMF0, `publish`
+1. **RTMP ingest** — `connect`, `publish`, and a socket at last
 2. **Paths** — a registry, and fan-out to readers
 3. **RTSP egress** — SDP, and RTP packetization (FU-A, STAP-A)
 4. **WebRTC egress** — via `str0m`

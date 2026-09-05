@@ -308,20 +308,61 @@ fn put_length_prefixed(
     Ok(())
 }
 
-/// An `AVCDecoderConfigurationRecord`: the parameter sets a length-prefixed
-/// stream keeps outside itself, and the width of the prefix its payloads
-/// use.
+/// What a decoder has to be given before any of the stream means anything.
 ///
-/// The two facts always travel together because both are read from the same
-/// record — which is also why a source that hands one over has, by that act,
-/// declared the other.
+/// This is the whole of what a protocol has to state about an H.264 track,
+/// and it says nothing about how that protocol writes it down. RTSP puts it
+/// in SDP, MPEG-TS repeats it in front of every keyframe, RTMP and MP4 wrap
+/// it in an [`AvcConfig`]; all three are describing this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Parameters {
+    /// Sequence parameter sets. At least one to be usable; the first is the
+    /// one whose profile and level describe the stream.
+    pub sps: Vec<Nal>,
+    /// Picture parameter sets. At least one to be usable.
+    pub pps: Vec<Nal>,
+}
+
+impl Parameters {
+    /// The sets as an access unit's leading NAL units, for a protocol that
+    /// carries them in the stream rather than beside it.
+    pub fn nalus(&self) -> Vec<Nal> {
+        self.sps.iter().chain(&self.pps).cloned().collect()
+    }
+
+    /// The profile, constraint and level bytes, which name what a decoder
+    /// must be able to do. Read from the first SPS, which is where a decoder
+    /// reads them in any case.
+    ///
+    /// Every protocol restates them somewhere — an `AvcConfig`'s header,
+    /// SDP's `profile-level-id`, an HLS playlist's `avc1.42c01e` — and all
+    /// of those are this.
+    pub fn profile_level(&self) -> Result<&[u8], H264Error> {
+        let first = self
+            .sps
+            .first()
+            .ok_or(H264Error::MissingParameterSet("SPS"))?
+            .data();
+        first.get(1..4).ok_or_else(|| H264Error::Truncated {
+            offset: 1,
+            needed: 4 - first.len(),
+        })
+    }
+}
+
+/// An `AVCDecoderConfigurationRecord`: how RTMP and MP4 write [`Parameters`]
+/// down, and the width of the length prefix their payloads use.
+///
+/// The two arrive together because both are read from this one record — a
+/// source that hands it over has, by that act, declared both — but they are
+/// separate facts and only one of them is about the stream. The prefix width
+/// belongs to whoever is doing the framing, and stops there; an egress that
+/// frames some other way has no use for it. Which is why it is here rather
+/// than in [`Parameters`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AvcConfig {
-    /// Sequence parameter sets. At least one; the first is the one whose
-    /// profile and level describe the stream.
-    pub sps: Vec<Nal>,
-    /// Picture parameter sets. At least one.
-    pub pps: Vec<Nal>,
+    /// What the record says a decoder needs.
+    pub parameters: Parameters,
     /// How many bytes each NAL unit's length prefix occupies: 1, 2 or 4.
     pub nal_length_size: usize,
 }
@@ -352,50 +393,33 @@ impl AvcConfig {
             return Err(H264Error::MissingParameterSet("PPS"));
         }
         Ok(Self {
-            sps,
-            pps,
+            parameters: Parameters { sps, pps },
             nal_length_size,
         })
     }
 
     /// Writes the record back out.
     ///
-    /// The profile and level bytes come from the first SPS, which is where a
-    /// decoder reads them in any case; a record whose header disagreed with
-    /// the parameter set it carries would be describing two streams.
+    /// The profile and level bytes come from the first SPS: a record whose
+    /// header disagreed with the parameter set it carries would be
+    /// describing two streams.
     pub fn to_bytes(&self) -> Result<Bytes, H264Error> {
-        let first = self
-            .sps
-            .first()
-            .ok_or(H264Error::MissingParameterSet("SPS"))?
-            .data();
-        let Some(profile) = first.get(1..4) else {
-            return Err(H264Error::Truncated {
-                offset: 1,
-                needed: 4 - first.len(),
-            });
-        };
+        let Parameters { sps, pps } = &self.parameters;
         let mut out = BytesMut::new();
         out.put_u8(1);
-        out.put_slice(profile);
+        out.put_slice(self.parameters.profile_level()?);
         // The reserved bits of both counts are ones, and a decoder that
         // reads them as anything else will reject the record.
         out.put_u8(0xfc | (self.nal_length_size as u8 - 1));
-        out.put_u8(0xe0 | (self.sps.len() as u8 & 0x1f));
-        for set in &self.sps {
+        out.put_u8(0xe0 | (sps.len() as u8 & 0x1f));
+        for set in sps {
             put_length_prefixed(&mut out, set.data(), 2)?;
         }
-        out.put_u8(self.pps.len() as u8);
-        for set in &self.pps {
+        out.put_u8(pps.len() as u8);
+        for set in pps {
             put_length_prefixed(&mut out, set.data(), 2)?;
         }
         Ok(out.freeze())
-    }
-
-    /// The parameter sets as an access unit's leading NAL units, for a
-    /// protocol that carries them in the stream rather than beside it.
-    pub fn parameter_set_nalus(&self) -> Vec<Nal> {
-        self.sps.iter().chain(&self.pps).cloned().collect()
     }
 }
 
@@ -586,26 +610,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn config_round_trips() {
-        let config = AvcConfig {
+    fn parameters() -> Parameters {
+        Parameters {
             sps: vec![sps()],
             pps: vec![pps()],
+        }
+    }
+
+    fn config() -> AvcConfig {
+        AvcConfig {
+            parameters: parameters(),
             nal_length_size: 4,
-        };
-        let parsed = AvcConfig::parse(&config.to_bytes().unwrap()).unwrap();
-        assert_eq!(parsed, config);
+        }
+    }
+
+    #[test]
+    fn config_round_trips() {
+        let parsed = AvcConfig::parse(&config().to_bytes().unwrap()).unwrap();
+        assert_eq!(parsed, config());
     }
 
     #[test]
     fn config_takes_its_profile_from_the_sps() {
-        let config = AvcConfig {
-            sps: vec![sps()],
-            pps: vec![pps()],
-            nal_length_size: 4,
-        };
-        let record = config.to_bytes().unwrap();
+        let record = config().to_bytes().unwrap();
         assert_eq!(&record[1..4], &sps().data()[1..4]);
+        assert_eq!(parameters().profile_level().unwrap(), &sps().data()[1..4]);
+    }
+
+    #[test]
+    fn parameters_without_an_sps_describe_nothing() {
+        let empty = Parameters {
+            sps: Vec::new(),
+            pps: vec![pps()],
+        };
+        assert_eq!(
+            empty.profile_level(),
+            Err(H264Error::MissingParameterSet("SPS"))
+        );
+    }
+
+    #[test]
+    fn parameters_lead_an_access_unit_in_the_order_a_decoder_wants_them() {
+        assert_eq!(parameters().nalus(), vec![sps(), pps()]);
     }
 
     #[test]
