@@ -60,6 +60,21 @@ impl VideoPayload {
             Self::H264(nalus) => h264::carries_parameter_sets(nalus),
         }
     }
+
+    /// How many coded bytes this is, not counting whatever framing an egress
+    /// will add. What a queue holding units has to measure itself in: their
+    /// number says nothing, since one picture can outweigh a thousand frames
+    /// of sound.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::H264(nalus) => nalus.iter().map(|nalu| nalu.data().len()).sum(),
+        }
+    }
+
+    /// Whether it carries nothing, which a well-formed picture never does.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// One frame of sound, under the codec that says how to read it.
@@ -72,6 +87,20 @@ pub enum AudioPayload {
     /// AAC, as one raw access unit — no ADTS header, which is a framing that
     /// belongs to the protocols asking for one. See the crate docs.
     Aac(Bytes),
+}
+
+impl AudioPayload {
+    /// How many coded bytes this is. See [`VideoPayload::len`].
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Aac(frame) => frame.len(),
+        }
+    }
+
+    /// Whether it carries nothing.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// One coded picture, and where it belongs.
@@ -180,6 +209,29 @@ impl Unit {
             Self::Video(unit) => unit.keyframe,
             Self::Audio(_) => true,
         }
+    }
+
+    /// Whether this is a picture a reader can be started at, which is not
+    /// the same question as [`Unit::is_keyframe`].
+    ///
+    /// A queue holding a stream back to the last place a reader could join
+    /// has to cut at a picture. Cutting at sound would leave the pictures
+    /// before it, which nothing can decode.
+    pub fn opens_a_stream(&self) -> bool {
+        matches!(self, Self::Video(unit) if unit.keyframe)
+    }
+
+    /// How many coded bytes this carries.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Video(unit) => unit.payload.len(),
+            Self::Audio(unit) => unit.payload.len(),
+        }
+    }
+
+    /// Whether it carries nothing.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

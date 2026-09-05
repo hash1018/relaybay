@@ -29,6 +29,7 @@
 //! Each adds back only what its own protocol asks for.
 
 pub mod codec;
+pub mod path;
 pub mod rtmp;
 pub mod track;
 pub mod unit;
