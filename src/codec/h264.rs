@@ -328,12 +328,6 @@ pub struct Parameters {
 }
 
 impl Parameters {
-    /// The sets as an access unit's leading NAL units, for a protocol that
-    /// carries them in the stream rather than beside it.
-    pub fn nalus(&self) -> Vec<Nal> {
-        self.sps.iter().chain(&self.pps).cloned().collect()
-    }
-
     /// The profile, constraint and level bytes, which name what a decoder
     /// must be able to do. Read from the first SPS, which is where a decoder
     /// reads them in any case.
@@ -651,11 +645,6 @@ mod tests {
             empty.profile_level(),
             Err(H264Error::MissingParameterSet("SPS"))
         );
-    }
-
-    #[test]
-    fn parameters_lead_an_access_unit_in_the_order_a_decoder_wants_them() {
-        assert_eq!(parameters().nalus(), vec![sps(), pps()]);
     }
 
     #[test]
