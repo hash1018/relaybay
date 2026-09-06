@@ -81,6 +81,9 @@ Planned, in order:
 3. **WebRTC egress** — via `str0m`
 4. **HLS egress** — segments and a playlist
 
+[`ARCHITECTURE.md`](ARCHITECTURE.md) has the rest: what each module does, how
+a publish and a play run end to end, and what every layer refuses.
+
 ## Where the runtime is
 
 Everything that reads or writes a socket uses `tokio`. Nothing under that
