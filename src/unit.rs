@@ -52,15 +52,6 @@ impl VideoPayload {
         }
     }
 
-    /// Whether the picture carries the parameter sets a decoder needs, so
-    /// that an egress which cannot state them separately has nothing to put
-    /// in front of it.
-    pub fn carries_parameter_sets(&self) -> bool {
-        match self {
-            Self::H264(nalus) => h264::carries_parameter_sets(nalus),
-        }
-    }
-
     /// How many coded bytes this is, not counting whatever framing an egress
     /// will add. What a queue holding units has to measure itself in: their
     /// number says nothing, since one picture can outweigh a thousand frames

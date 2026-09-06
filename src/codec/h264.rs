@@ -25,9 +25,9 @@
 //! uses. Without them a decoder cannot start, and every protocol solves that
 //! differently: RTMP and MP4 keep them in an [`AvcConfig`] outside the
 //! stream, MPEG-TS repeats them in front of every keyframe, RTSP sends them
-//! once in SDP. So a relay has to be able to both find them in a stream and
-//! state them separately, which is what [`AvcConfig`] and
-//! [`carries_parameter_sets`] are for.
+//! once in SDP. So what a relay has to hold is the sets themselves —
+//! [`Parameters`] — and be able to write them in whichever of those shapes
+//! the next protocol wants.
 
 use bytes::{BufMut, Bytes, BytesMut};
 
@@ -171,13 +171,6 @@ pub enum H264Error {
 /// call a keyframe an ordinary picture.
 pub fn is_keyframe(nalus: &[Nal]) -> bool {
     nalus.iter().any(|nalu| nalu.kind() == NalType::Idr)
-}
-
-/// Whether an access unit carries the parameter sets a decoder needs, so
-/// that a protocol which cannot state them separately has nothing to add.
-pub fn carries_parameter_sets(nalus: &[Nal]) -> bool {
-    let has = |wanted| nalus.iter().any(|nalu| nalu.kind() == wanted);
-    has(NalType::Sps) && has(NalType::Pps)
 }
 
 /// Whether `data` opens with a start code, which is how a payload's framing
@@ -692,11 +685,5 @@ mod tests {
         let sei = nal(&[0x06, 0x05, 0x01, 0x80]);
         assert!(is_keyframe(&[sei.clone(), idr()]));
         assert!(!is_keyframe(&[sei, nal(&[0x41, 0x9a])]));
-    }
-
-    #[test]
-    fn parameter_sets_are_found_in_an_access_unit() {
-        assert!(carries_parameter_sets(&[sps(), pps(), idr()]));
-        assert!(!carries_parameter_sets(&[sps(), idr()]));
     }
 }
