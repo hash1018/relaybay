@@ -63,6 +63,25 @@ impl Default for Config {
     }
 }
 
+/// Which protocol a listener speaks, so that binding every port can be done
+/// before any of them is served. See [`Server::start_on`].
+#[derive(Clone, Copy, Debug)]
+enum Protocol {
+    Rtmp,
+    Rtsp,
+}
+
+impl Protocol {
+    /// Who turns up on this port, which is not the same as which protocol it
+    /// is: RTMP is how a stream gets in and RTSP is how one gets out.
+    fn serves(self) -> &'static str {
+        match self {
+            Self::Rtmp => "RTMP publishers",
+            Self::Rtsp => "RTSP players",
+        }
+    }
+}
+
 /// Starts a server. See the module docs.
 pub struct Server;
 
@@ -98,19 +117,34 @@ impl Server {
     /// forever, and a runtime without timers panics at the first of those
     /// rather than here.
     pub fn start_on(config: Config, runtime: Handle) -> io::Result<ServerHandle> {
-        let registry = Registry::new();
-        let mut tasks = Vec::new();
+        // Every port is taken before any listener is started, because
+        // binding is the only step here that can fail and a task already
+        // spawned cannot be taken back: dropping a `JoinHandle` detaches the
+        // task rather than ending it, so returning early from between two
+        // spawns would leave one listening with nothing able to stop it.
+        // Under `start` the runtime would take it down; under `start_on` it
+        // would hold the port for as long as the caller's runtime lived.
+        let listeners = [
+            config.rtmp.map(|address| (address, Protocol::Rtmp)),
+            config.rtsp.map(|address| (address, Protocol::Rtsp)),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|(address, protocol)| Ok((address, protocol, bind(address, &runtime)?)))
+        .collect::<io::Result<Vec<_>>>()?;
 
-        if let Some(address) = config.rtmp {
-            let listener = bind(address, &runtime)?;
-            tracing::info!(%address, "accepting RTMP publishers");
-            tasks.push(runtime.spawn(rtmp::server::serve(listener, Arc::clone(&registry))));
-        }
-        if let Some(address) = config.rtsp {
-            let listener = bind(address, &runtime)?;
-            tracing::info!(%address, "accepting RTSP players");
-            tasks.push(runtime.spawn(rtsp::server::serve(listener, Arc::clone(&registry))));
-        }
+        let registry = Registry::new();
+        let tasks = listeners
+            .into_iter()
+            .map(|(address, protocol, listener)| {
+                tracing::info!(%address, "accepting {}", protocol.serves());
+                let registry = Arc::clone(&registry);
+                match protocol {
+                    Protocol::Rtmp => runtime.spawn(rtmp::server::serve(listener, registry)),
+                    Protocol::Rtsp => runtime.spawn(rtsp::server::serve(listener, registry)),
+                }
+            })
+            .collect();
 
         Ok(ServerHandle {
             registry,
@@ -247,6 +281,33 @@ mod tests {
         })
         .unwrap();
         server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_port_that_could_not_be_taken_leaves_none_of_the_others_taken() {
+        // The listener that did bind must not be left running. A JoinHandle
+        // detaches rather than aborts when dropped, so a server that spawned
+        // before it knew every port was free would hold one for as long as
+        // the caller's runtime lived, with nothing able to stop it.
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let taken = occupied.local_addr().unwrap();
+        let free = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap()
+        };
+
+        Server::start_on(
+            Config {
+                rtmp: Some(free),
+                rtsp: Some(taken),
+                worker_threads: 1,
+            },
+            Handle::current(),
+        )
+        .expect_err("the second port is in use");
+
+        std::net::TcpListener::bind(free)
+            .expect("the first port was given back rather than held by a task nobody owns");
     }
 
     #[tokio::test]
