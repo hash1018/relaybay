@@ -67,13 +67,13 @@ const MAX_MESSAGE_LENGTH: usize = 0xff_ffff;
 /// which runs to a couple of megabytes at bitrates nobody sends; past that a
 /// declared length is either a mistake or an attempt to make a server hold
 /// memory on the strength of one header.
-const MAX_ASSEMBLED_LENGTH: usize = 8 * 1024 * 1024;
+pub const MAX_ASSEMBLED_LENGTH: usize = 8 * 1024 * 1024;
 
 /// How many chunk streams one connection may open. An encoder uses a
 /// handful — one for control, one for commands, one each for audio and
 /// video — and the identifier space runs to 65 599, every one of which would
 /// otherwise get a reassembly buffer.
-const MAX_CHUNK_STREAMS: usize = 64;
+pub const MAX_CHUNK_STREAMS: usize = 64;
 
 /// What a three-byte timestamp field holds to say the real value follows the
 /// header in four bytes.

@@ -30,11 +30,11 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// How large the head of a request may be. Anything RTSP sends is a few
 /// hundred bytes; the cap is so that a peer sending header bytes forever
 /// does not make a server hold them.
-const MAX_HEAD: usize = 8 * 1024;
+pub const MAX_HEAD: usize = 8 * 1024;
 
 /// How large a request body may be. Only `ANNOUNCE` and `SET_PARAMETER`
 /// carry one, and an SDP is small.
-const MAX_BODY: usize = 64 * 1024;
+pub const MAX_BODY: usize = 64 * 1024;
 
 /// What a request asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]

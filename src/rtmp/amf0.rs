@@ -40,7 +40,7 @@ use bytes::{BufMut, BytesMut};
 /// How deeply objects and arrays may nest. RTMP's own messages go two deep;
 /// the limit is here because reading is recursive and a peer that sent
 /// nothing but object markers would otherwise run the stack out.
-const MAX_DEPTH: usize = 32;
+pub const MAX_DEPTH: usize = 32;
 
 /// The type markers, in the order the specification numbers them.
 mod marker {

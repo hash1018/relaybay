@@ -26,7 +26,14 @@
 //!
 //! The units since the last picture a stream can be started at, so a reader
 //! that joins between keyframes has something to decode immediately instead
-//! of a black screen until the next one. See [`Cache`].
+//! of a black screen until the next one — at a two second keyframe interval,
+//! a second of nothing on average.
+//!
+//! One group of pictures, and never part of one. A group that grows past
+//! [`CACHE_LIMIT`] is dropped whole and nothing is kept until the next
+//! keyframe, because half a group would not start a reader anyway. A stream
+//! with no pictures has nothing to cut a group at, so it drops its oldest
+//! instead, which is right where every frame stands alone.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,14 +49,14 @@ use crate::unit::Unit;
 /// Counted in units rather than bytes because that is what the queue under
 /// it counts. Several seconds of a stream at any ordinary frame rate, which
 /// is far longer than a reader that is going to recover needs.
-const BACKLOG: usize = 1024;
+pub const BACKLOG: usize = 1024;
 
 /// How much of a stream is held for readers that have not joined yet.
 ///
 /// A cap rather than a target: what is kept is one group of pictures, and
 /// this is only what happens when a publisher sends one longer than any
 /// reader would want to be handed at once.
-const CACHE_LIMIT: usize = 8 * 1024 * 1024;
+pub const CACHE_LIMIT: usize = 8 * 1024 * 1024;
 
 /// Every path, by name.
 ///
