@@ -43,10 +43,21 @@ pub const START_CODE: [u8; 4] = [0, 0, 0, 1];
 /// this module rather than to the units a relay passes around.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NalType {
-    /// A non-IDR coded slice: an ordinary P or B picture.
+    /// A slice of a picture that is not an IDR.
+    ///
+    /// Usually a P or a B, and sometimes an I: which of the three lives in
+    /// the slice header, behind an exponential-Golomb code nothing here
+    /// reads. Being an I is not enough to start a reader at anyway — see
+    /// [`NalType::Idr`].
     Slice,
-    /// An IDR slice — the only picture that can be decoded with nothing
-    /// before it.
+    /// A slice of an IDR picture, which is where a reader can be started.
+    ///
+    /// Not merely a picture coded without reference to any other — an I
+    /// picture is that too — but one that no later picture may reference
+    /// across, so everything after it decodes with nothing before it. That
+    /// is the property a relay needs, and the only one of the two that can
+    /// be read without decoding: it is these five bits, where the slice type
+    /// is a field in a header this never parses.
     Idr,
     /// Supplemental enhancement information.
     Sei,
